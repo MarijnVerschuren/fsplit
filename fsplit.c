@@ -28,29 +28,6 @@ static struct file_operations fops = {
 };
 
 
-static int fsplit_open(struct inode *inode, struct file *file) {
-	printk(KERN_INFO "fsplit: open()\n");
-	return 0;
-}
-
-static int fsplit_release(struct inode *inode, struct file *file) {
-	printk(KERN_INFO "fsplit: close()\n");
-	return 0;
-}
-
-static ssize_t fsplit_read(struct file *filp, char __user *buf, size_t len,loff_t * off) {
-	printk(KERN_INFO "fsplit: read\n");
-	// TODO:
-	return 0;
-}
-
-static ssize_t fsplit_write(struct file *filp, const char *buf, size_t len, loff_t * off) {
-	printk(KERN_INFO "fsplit: write\n");
-	// TODO:
-	return len;
-}
-
-
 static char* fsplit_devnode(const struct device* dev, umode_t* mode) {
 	if (!mode) {
 		return NULL;
@@ -110,3 +87,47 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marijn Verschuren <marijnverschuren3@gmail.com>");
 MODULE_DESCRIPTION("simple linux driver that serves as a simple write through to any other file and log this communication");
 MODULE_VERSION("1.0");
+
+
+typedef unsigned char uint8_t;
+
+const static char* emulated_path =	"/dev/ttyUSB0";
+const static char* log_path =		"/home/marijn/ttyUSB0.log";
+static struct file* emulated =		NULL;
+static struct file* log =			NULL;
+static uint8_t open =				0;
+
+static int fsplit_open(struct inode *inode, struct file *file) {
+	emulated =	filp_open(emulated_path, O_RDWR | O_LARGEFILE, 0);
+	log =		filp_open(log_path, O_RDWR | O_CREAT, 666);
+	open =		(log > 0) && (emulated > 0);
+	printk(KERN_INFO "fsplit: emu: %d, log: %d\n", emulated, log);
+	printk(KERN_INFO "fsplit: open() -> %d\n", open);
+	return 0;
+}
+
+static int fsplit_release(struct inode *inode, struct file *file) {
+	printk(KERN_INFO "fsplit: close()\n");
+	if (!open) { return 0; }
+	printk(KERN_INFO "fsplit: em: %x, %x\n", emulated, log);
+	//if (emulated)	{ filp_close(emulated, NULL); }
+	//if (log)		{ filp_close(log, NULL); }
+	open = 0; return 0;
+}
+
+static ssize_t fsplit_read(struct file *filp, char __user *buf, size_t len,loff_t * off) {
+	printk(KERN_INFO "fsplit: read\n");
+	if (!open) { return 0; }
+
+	return 0;
+}
+
+static ssize_t fsplit_write(struct file *filp, const char *buf, size_t len, loff_t * off) {
+	printk(KERN_INFO "fsplit: write\n");
+	if (!open) { return len; }
+	printk(KERN_INFO "fsplit w: em: %x, %x\n", emulated, log);
+	loff_t pos = 0;
+	// kernel_write(emulated, buf, len, &pos);
+	kernel_write(log, buf, len, &log->f_pos);
+	return len;
+}
