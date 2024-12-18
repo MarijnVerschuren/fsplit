@@ -33,6 +33,7 @@ static int      	fsplit_release(struct inode *inode, struct file *file);
 static ssize_t  	fsplit_read(struct file *filp, char __user *buf, size_t len,loff_t * off);
 static ssize_t  	fsplit_write(struct file *filp, const char *buf, size_t len, loff_t * off);
 
+static void			send_written_data(const void* buffer, int size);
 static void			send_message(void* buffer, int size);
 static void			socket_receive(struct sk_buff* skb);
 
@@ -60,7 +61,7 @@ static struct sock*		socket =			NULL;
 
 static struct nlmsghdr*	netlink_hdr =		NULL;
 static int				pid =				0;
-
+static uint8_t			buffer[MAX_PAYLOAD];
 
 /*!<
  * file functions
@@ -78,12 +79,20 @@ static int fsplit_release(struct inode *inode, struct file *file) {
 static ssize_t fsplit_read(struct file *filp, char __user *buf, size_t len,loff_t * off) {
 	printk(KERN_INFO "fsplit: read\n");
 	send_message("fsplit was read", 16);
+
+	// TODO: write read request and wait until response!
+
 	return 0;
 }
 
 static ssize_t fsplit_write(struct file *filp, const char *buf, size_t len, loff_t * off) {
 	printk(KERN_INFO "fsplit: write\n");
-	send_message("fsplit was written", 19);
+
+	// TODO: improve code (inline send message)
+	copy_from_user(buffer + 1, buf, len);
+	buffer[0] = 'W';
+	send_message(buffer, len);
+
 	return len;
 }
 
@@ -103,7 +112,7 @@ static void send_message(void* buffer, int size) {
 	}
 
 	netlink_hdr = nlmsg_put(sock_out, 0, 0, NLMSG_DONE, size, 0);
-	//NETLINK_CB(sock_out).dst_group = 0; /* not in mcast group */
+	// NETLINK_CB(sock_out).dst_group = 0; /* not in mcast group */
 	memcpy(nlmsg_data(netlink_hdr), buffer, size);
 	netlink_hdr->nlmsg_len = NLMSG_SPACE(size);
 

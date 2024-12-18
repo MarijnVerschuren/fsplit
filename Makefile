@@ -8,7 +8,7 @@ INT_DIR = ./int
 BIN_DIR = ./bin
 
 
-all: clean setup kernel deamon
+all: clean setup kernel daemon
 	clear
 
 clean:
@@ -19,8 +19,8 @@ setup:
 	mkdir $(INT_DIR)
 	mkdir $(BIN_DIR)
 
-deamon:
-	gcc -o $(BIN_DIR)/fsplit_deamon.elf $(SRC_DIR)/fsplit_deamon.c
+daemon:
+	gcc -o $(BIN_DIR)/fsplit_daemon.elf $(SRC_DIR)/fsplit_daemon.c
 
 kernel:
 	make -C $(KERNEL_DIR) M=$(shell pwd) modules
