@@ -33,6 +33,7 @@ static int      	fsplit_release(struct inode *inode, struct file *file);
 static ssize_t  	fsplit_read(struct file *filp, char __user *buf, size_t len,loff_t * off);
 static ssize_t  	fsplit_write(struct file *filp, const char *buf, size_t len, loff_t * off);
 
+static void			send_message(void* buffer, int size);
 static void			socket_receive(struct sk_buff* skb);
 
 static __init int	fsplit_init(void);
@@ -57,6 +58,8 @@ static struct file_operations fops = {
 
 static struct sock*		socket =			NULL;
 
+static struct nlmsghdr*	netlink_hdr =		NULL;
+static int				pid =				0;
 
 
 /*!<
@@ -74,11 +77,13 @@ static int fsplit_release(struct inode *inode, struct file *file) {
 
 static ssize_t fsplit_read(struct file *filp, char __user *buf, size_t len,loff_t * off) {
 	printk(KERN_INFO "fsplit: read\n");
+	send_message("fsplit was read", 16);
 	return 0;
 }
 
 static ssize_t fsplit_write(struct file *filp, const char *buf, size_t len, loff_t * off) {
 	printk(KERN_INFO "fsplit: write\n");
+	send_message("fsplit was written", 19);
 	return len;
 }
 
@@ -87,39 +92,34 @@ static ssize_t fsplit_write(struct file *filp, const char *buf, size_t len, loff
 /*!<
  * socket functions
  * */
-static void socket_receive(struct sk_buff* sock_buf) {
-	struct nlmsghdr*		netlink_hdr =		NULL;
-	int						pid =				0;
-	struct sk_buff*			sock_buf_out =		NULL;
-	int						res =				0;
+static void send_message(void* buffer, int size) {
+	if (!pid) { return; }
 
-	// TODO
-	char*					msg =				"Hello from kernel";
-	int						msg_size =			18;
+	struct sk_buff*	sock_out = nlmsg_new(size, GFP_KERNEL);
 
-	printk(KERN_INFO "fsplit: socket receive\n");
-
-	netlink_hdr = (struct nlmsghdr*)sock_buf->data;
-	pid = netlink_hdr->nlmsg_pid;
-	printk(KERN_INFO "fsplit received msg from PID: %d\n", pid);
-	printk(KERN_INFO "fsplit msg: %s\n", (char*)nlmsg_data(netlink_hdr));
-
-	sock_buf_out = nlmsg_new(msg_size, 0);
-
-	if(!sock_buf_out) {
+	if(!sock_out) {
 		printk(KERN_ERR "fsplit: failed to allocate message buffer\n");
 		return;
 	}
 
-	netlink_hdr = nlmsg_put(sock_buf_out, 0, 0, NLMSG_DONE, msg_size, 0);
-	NETLINK_CB(sock_buf_out).dst_group = 0; /* not in mcast group */
-	strncpy(nlmsg_data(netlink_hdr), msg, msg_size);
+	netlink_hdr = nlmsg_put(sock_out, 0, 0, NLMSG_DONE, size, 0);
+	//NETLINK_CB(sock_out).dst_group = 0; /* not in mcast group */
+	memcpy(nlmsg_data(netlink_hdr), buffer, size);
+	netlink_hdr->nlmsg_len = NLMSG_SPACE(size);
 
-	res = nlmsg_unicast(socket, sock_buf_out, pid);
-
-	if(res < 0) {
+	if(nlmsg_unicast(socket, sock_out, pid) < 0) {
 		printk(KERN_INFO "fsplit: error while transmitting on socket\n");
 	}
+}
+
+static void socket_receive(struct sk_buff* sock_buf) {
+	printk(KERN_INFO "fsplit: socket receive\n");
+
+	// TODO: message handleing
+	netlink_hdr = (struct nlmsghdr*)sock_buf->data;
+	pid = netlink_hdr->nlmsg_pid;
+	printk(KERN_INFO "fsplit: received msg from PID: %d\n", pid);
+	printk(KERN_INFO "fsplit: msg[%d]: %s\n", netlink_hdr->nlmsg_len - 4, (char*)nlmsg_data(netlink_hdr));
 }
 
 
