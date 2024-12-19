@@ -11,6 +11,8 @@
 #include <linux/device.h>
 #include <linux/netlink.h>
 #include <linux/skbuff.h>
+#include <linux/serial.h>
+#include <linux/ioctl.h>
 
 #include <net/sock.h>
 
@@ -19,22 +21,36 @@
 
 
 /*!<
+ * defines
+ * */
+#define TIOC_IOCTL_MSET			_IOW('t', 109, int)
+#define TIOC_IOCTL_MGET			_IOR('t', 106, int)
+
+#define SERIAL_IOCTL_RESET		_IO('S', 0)
+#define SERIAL_IOCTL_SET_BAUD	_IOW('S', 1, int)
+#define SERIAL_IOCTL_GET_BAUD	_IOR('S', 2, int)
+
+
+/*!<
  * type declarations
  * */
-typedef unsigned char uint8_t;
+typedef unsigned char		uint8_t;
+typedef unsigned short		uint16_t;
+typedef unsigned long long	uint64_t;
 
 
 
 /*!<
  * function declarations
  * */
-static int      	fsplit_open(struct inode *inode, struct file *file);
-static int      	fsplit_release(struct inode *inode, struct file *file);
-static ssize_t  	fsplit_read(struct file *filp, char __user *buf, size_t len,loff_t * off);
-static ssize_t  	fsplit_write(struct file *filp, const char *buf, size_t len, loff_t * off);
+static long int	 	fsplit_ioctl(struct file* filp, unsigned int cmd, long unsigned int arg);
+static int      	fsplit_open(struct inode* inode, struct file* file);
+static int      	fsplit_release(struct inode* inode, struct file* file);
+static ssize_t  	fsplit_read(struct file* filp, char __user* buf, size_t len, loff_t* off);
+static ssize_t  	fsplit_write(struct file* filp, const char* buf, size_t len, loff_t* off);
 
 static void			send_written_data(const void* buffer, int size);
-static void			send_message(void* buffer, int size);
+static inline void	send_message(char* str);
 static void			socket_receive(struct sk_buff* skb);
 
 static __init int	fsplit_init(void);
@@ -50,37 +66,53 @@ static struct class*	fsplit_class =		NULL;
 static struct cdev		fsplit_cdev =		{};
 
 static struct file_operations fops = {
-	.owner =	THIS_MODULE,
-	.read =		fsplit_read,
-	.write =	fsplit_write,
-	.open =		fsplit_open,
-	.release =	fsplit_release,
+	.owner =			THIS_MODULE,
+	.unlocked_ioctl =	fsplit_ioctl,
+	.read =				fsplit_read,
+	.write =			fsplit_write,
+	.open =				fsplit_open,
+	.release =			fsplit_release,
 };
 
 static struct sock*		socket =			NULL;
 
 static struct nlmsghdr*	netlink_hdr =		NULL;
 static int				pid =				0;
-static uint8_t			buffer[MAX_PAYLOAD];
+
+static char				fsplit_buffer[MAX_PAYLOAD];
+
+static int				baud = 9600;
+static int				TOIC = 0x002;	// DTR
 
 /*!<
  * file functions
  * */
-static int fsplit_open(struct inode *inode, struct file *file) {
-	printk(KERN_INFO "fsplit: open() -> %d\n");
+static long fsplit_ioctl(struct file* filp, unsigned int cmd, long unsigned int argp) {
+	printk(KERN_INFO "fsplit: ioctl()\n");
+
+	uint64_t tmp; copy_from_user(&tmp, argp, 8);
+	sprintf(fsplit_buffer, "C%08X%016X", cmd, tmp); // %08X
+	send_message(fsplit_buffer);
+
+	return -1;
+}
+
+static int fsplit_open(struct inode* inode, struct file* file) {
+	printk(KERN_INFO "fsplit: open()\n");
 	return 0;
 }
 
-static int fsplit_release(struct inode *inode, struct file *file) {
+static int fsplit_release(struct inode* inode, struct file* file) {
 	printk(KERN_INFO "fsplit: close()\n");
 	return 0;
 }
 
-static ssize_t fsplit_read(struct file *filp, char __user *buf, size_t len,loff_t * off) {
+static ssize_t fsplit_read(struct file* filp, char __user* buf, size_t len, loff_t* off) {
 	printk(KERN_INFO "fsplit: read\n");
-	send_message("fsplit was read", 16);
 
-	// TODO: write read request and wait until response!
+	uint64_t tmp; copy_from_user(&tmp, off, 8);
+	sprintf(fsplit_buffer, "R%016X%016X", len, tmp);
+	send_message(fsplit_buffer);
 
 	return 0;
 }
@@ -88,10 +120,16 @@ static ssize_t fsplit_read(struct file *filp, char __user *buf, size_t len,loff_
 static ssize_t fsplit_write(struct file *filp, const char *buf, size_t len, loff_t * off) {
 	printk(KERN_INFO "fsplit: write\n");
 
-	// TODO: improve code (inline send message)
-	copy_from_user(buffer + 1, buf, len);
-	buffer[0] = 'W';
-	send_message(buffer, len);
+	uint64_t left = len; do {
+		sprintf(fsplit_buffer, "W");
+		uint64_t msglen = left < MAX_PAYLOAD ? left : MAX_PAYLOAD;
+		left -= msglen; uint8_t tmp;
+		for (uint64_t i = 0; i < msglen; i++) {
+			copy_from_user(&tmp, buf + i, 1);
+			sprintf((fsplit_buffer + 1 + (2 * i)), "%02X", tmp);
+		}
+		send_message(fsplit_buffer);
+	} while (left);
 
 	return len;
 }
@@ -101,11 +139,11 @@ static ssize_t fsplit_write(struct file *filp, const char *buf, size_t len, loff
 /*!<
  * socket functions
  * */
-static void send_message(void* buffer, int size) {
+static inline void send_message(char* str) {
 	if (!pid) { return; }
 
+	uint32_t size = strlen(str);
 	struct sk_buff*	sock_out = nlmsg_new(size, GFP_KERNEL);
-
 	if(!sock_out) {
 		printk(KERN_ERR "fsplit: failed to allocate message buffer\n");
 		return;
@@ -113,7 +151,7 @@ static void send_message(void* buffer, int size) {
 
 	netlink_hdr = nlmsg_put(sock_out, 0, 0, NLMSG_DONE, size, 0);
 	// NETLINK_CB(sock_out).dst_group = 0; /* not in mcast group */
-	memcpy(nlmsg_data(netlink_hdr), buffer, size);
+	strcpy(nlmsg_data(netlink_hdr), str);
 	netlink_hdr->nlmsg_len = NLMSG_SPACE(size);
 
 	if(nlmsg_unicast(socket, sock_out, pid) < 0) {

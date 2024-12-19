@@ -27,7 +27,8 @@ struct nlmsghdr*		netlink_hdr =			NULL;
 struct iovec			io_vector =				{};
 struct msghdr			msg_hdr =				{};
 int						sock_fd =				0;
-void*					netlink_buffer =		NULL;
+
+char	 				buffer[MAX_PAYLOAD];
 
 
 
@@ -73,12 +74,13 @@ void daemon_loop() {
 
 		// TODO file writes!!
 		uint32_t payload_len = netlink_hdr->nlmsg_len - NLMSG_HDRLEN;
-		printf("received [%d]: %.*s\n", payload_len, payload_len, (char*)NLMSG_DATA(netlink_hdr));
+		strcpy(buffer, (char*)NLMSG_DATA(netlink_hdr));
+		printf("\nreceived %c with size: %d -> %s\n", buffer[0], payload_len, &buffer[1]);
 	}
 }
 
 
-
+// avrdude -c arduino -p m328p -P /dev/fsplit -b115200 -D -U flash:w:firmware.hex:i -v -v -v -v
 /*!<
  * init functions
  * */
