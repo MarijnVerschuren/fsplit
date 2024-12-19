@@ -81,20 +81,28 @@ static int				pid =				0;
 
 static char				fsplit_buffer[MAX_PAYLOAD];
 
-static int				baud = 9600;
-static int				TOIC = 0x002;	// DTR
 
 /*!<
  * file functions
  * */
 static long fsplit_ioctl(struct file* filp, unsigned int cmd, long unsigned int argp) {
-	printk(KERN_INFO "fsplit: ioctl()\n");
+	static const char* dir_types[] = {"VOID", "W", "R", "WR"};
+	uint8_t type =	_IOC_TYPE(cmd);
+	uint8_t num =	_IOC_NR(cmd);
+	uint8_t dir =	_IOC_DIR(cmd);
+	uint16_t size =	_IOC_SIZE(cmd);
+	printk(KERN_INFO "fsplit: ioctl(t=%c, n=%d, d=%s, s=%d)\n", type, num, dir_types[dir], size);
 
-	uint64_t tmp; copy_from_user(&tmp, argp, 8);
-	sprintf(fsplit_buffer, "C%08X%016X", cmd, tmp); // %08X
+	uint8_t tmp;
+	sprintf(fsplit_buffer, "C%08X", cmd);
+	for (uint16_t i = 0; i < (size * (dir & 0b1)); i++) {
+		copy_from_user(&tmp, argp, 1);
+		sprintf(fsplit_buffer + (i << 2) + 9, "%02X", tmp);
+	}
 	send_message(fsplit_buffer);
-
-	return -1;
+	// TODO: receive resp
+	if (size & (dir & 0b10)) { return -1; }
+	return 0;
 }
 
 static int fsplit_open(struct inode* inode, struct file* file) {
